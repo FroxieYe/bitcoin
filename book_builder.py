@@ -14,8 +14,6 @@ class Node(object):
 
 class Book_driver(object):
 	def __init__(self, depth = 5):
-		self.__bid_record = {}
-		self.__ask_record = {}
 		self.__bid_pqdict = pqd()
 		self.__ask_pqdict = pqd()
 		self.__bid_book = []
@@ -41,32 +39,40 @@ class Book_driver(object):
 					self.__ask_pqdict, order_id[i], qty[i], \
 					ts[i], capture_ts[i], side[i])
 			else:
-				raise ValueError("The order type is not recognized %u" %side[i])
-			self.__bid_book.append(self.__gen_book(self.__bid_record))
-			self.__ask_book.append(self.__gen_book(self.__ask_record))
-		print self.__error_cnt
+				raise ValueError("The order type is not recognized %u" \
+					%side[i])
+			self.__bid_book.append(self.__gen_book(self.__bid_pqdict))
+			self.__ask_book.append(self.__gen_book(self.__ask_pqdict))
+		#print self.__bid_pqdict
+		#print self.__ask_pqdict
 		return self.__bid_book, self.__ask_book
 
-	def __push_queue(self, action, price, pq, order_id, qty, ts, capture_ts, side):
+	def __push_queue(self, action, price, pq, order_id, qty, ts, \
+			capture_ts, side):
 		if action == 0:
 			if price not in pq:
-				pq[price] = (price, 1, Node(order_id, qty, ts, capture_ts, side))
+				pq[price] = (price, 1, Node(order_id, qty, ts, \
+						capture_ts, side))
+				cur = pq[price][2]
+				while cur != None:
+					cur = cur.next	
 			else:
 				length, listNode = pq[price][1], pq[price][2]
 				cur = listNode
-				print length
 				while cur.next != None:
 					cur = cur.next
 				cur.next = Node(order_id, qty, ts, capture_ts, side)
 				pq[price] = (price, length+1, listNode)
 		elif action == 1:
 			if price not in pq:
-				pq[price] = (price, 1, Node(order_id, qty, ts, capture_ts, side))
+				pq[price] = (price, 1, Node(order_id, qty, ts, \
+						capture_ts, side))
 			else:
 				length, listNode = pq[price][1], pq[price][2]
 				cur = listNode
 				if length == 1 and cur.order_id == order_id:
-					pq[price] = (price, 1, Node(order_id, qty, ts, capture_ts, side))
+					pq[price] = (price, 1, Node(order_id, qty, ts, \
+							capture_ts, side))
 					return
 				node = None
 				while cur.next != None:
@@ -80,7 +86,12 @@ class Book_driver(object):
 						node.capture_ts = capture_ts
 						node.next = None
 					cur = cur.next
-				cur.next = node
+				if cur.order_id == order_id:
+					cur.qty = qty
+					cur.ts = ts,
+					cur.capture_ts = capture_ts
+				else:
+					cur.next = node
 				pq[price] = (price, length, listNode)
 		elif action == 2:
 			if price in pq:
@@ -101,11 +112,13 @@ class Book_driver(object):
 		j = 0
 		candidates = pqdict.nsmallest(self.__depth, record)
 		res = [[0, 0] for i in xrange(self.__depth)]
-		for k,v in candidates:
+		for k in candidates:
+			v = record[k]
 			cur = v[2]
 			qty = 0
 			while cur != None:
 				qty += cur.qty
+				cur = cur.next
 			res[j][0] = abs(k)
 			res[j][1] = qty
 			j += 1
@@ -134,5 +147,7 @@ def tuple_binary_search(A, target1, target2_idx, target2):
 if __name__ == "__main__":
 	md_order = pd.read_csv("/Users/wenshuaiye/Kaggle/bitcoin/data/live_order_1")
 	driver = Book_driver(5)
+	print md_order[md_order.price == 605.79]
 	tmp = driver.load(md_order)
-			
+	print tmp[0][-1]			
+
