@@ -1,7 +1,10 @@
 import pandas as pd
 import numpy as np
+import os
 import pqdict
+import csv_reader as cr
 from pqdict import pqdict as pqd
+
 class Node(object):
 	def __init__(self, order_id = None, qty = None, ts = None, \
 			capture_ts = None, side = None):
@@ -19,9 +22,10 @@ class Book_driver(object):
 		self.__bid_book = []
 		self.__ask_book = []
 		self.__depth = depth
+		self.__capture_ts = []
 		self.__error_cnt = 0
-
-	def load(self, df):
+		
+	def load(self, df, trade):
 		action = df.action.values
 		price = df.price.values
 		side = df.order_type.values
@@ -29,7 +33,31 @@ class Book_driver(object):
 		ts = df.datetime.values
 		qty = df.amount.values
 		order_id = df.id.values
+		trades = {}
+		
+		tol = 10
+		for i, row in trade.iterrows():
+			if row.type == 0:
+				for j in np.arange(row.timestamp-tol, \
+						row.timestamp+tol+1):
+					trades[(j, row.buy_order_id)] = \
+							(row.price, row.amount)
+					trades[(j, row.sell_order_id)] = \
+							(row.price, row.amount)
+			elif row.type == 1:
+				for j in np.arange(row.timestamp-tol, \
+						row.timestamp+tol+1):
+					trades[(j, row.sell_order_id)] = \
+							(row.price, row.amount)
+					trades[(j, row.buy_order_id)] = \
+							(row.price, row.amount)
+		
 		for i in xrange(action.shape[0]):
+			if (ts[i], order_id[i]) in trades:
+				#if qty[i] == trades[(ts[i], order_id[i])][1]:
+				#print "Market Order with price: ", \
+				#		trades[(ts[i], order_id[i])][0]
+				continue
 			if side[i] == 0:
 				self.__push_queue(action[i], -1*price[i], \
 					self.__bid_pqdict, order_id[i], qty[i], \
@@ -41,11 +69,12 @@ class Book_driver(object):
 			else:
 				raise ValueError("The order type is not recognized %u" \
 					%side[i])
+			self.__capture_ts.append(capture_ts[i])
 			self.__bid_book.append(self.__gen_book(self.__bid_pqdict))
 			self.__ask_book.append(self.__gen_book(self.__ask_pqdict))
 		#print self.__bid_pqdict
 		#print self.__ask_pqdict
-		return self.__bid_book, self.__ask_book
+		return self.__bid_book, self.__ask_book, self.__capture_ts
 
 	def __push_queue(self, action, price, pq, order_id, qty, ts, \
 			capture_ts, side):
@@ -70,11 +99,16 @@ class Book_driver(object):
 			else:
 				length, listNode = pq[price][1], pq[price][2]
 				cur = listNode
+				'''
 				if length == 1 and cur.order_id == order_id:
 					pq[price] = (price, 1, Node(order_id, qty, ts, \
 							capture_ts, side))
 					return
+				'''
 				node = None
+				dummy = Node()
+				dummy.next = listNode
+				cur = dummy
 				while cur.next != None:
 					if cur.next.order_id == order_id:
 						node = cur.next
@@ -92,26 +126,29 @@ class Book_driver(object):
 					cur.capture_ts = capture_ts
 				else:
 					cur.next = node
-				pq[price] = (price, length, listNode)
+				pq[price] = (price, length, dummy.next)
 		elif action == 2:
 			if price in pq:
 				length, listNode = pq[price][1], pq[price][2]
-				cur = listNode
-				if length == 1 and cur.order_id == order_id:
-					pq.pop(price)
-					return
+				dummy = Node()
+				dummy.next = listNode
+				cur = dummy
 				while cur.next != None:
 					if cur.next.order_id == order_id:
 						cur.next = cur.next.next
+						length -= 1
 						break
 					cur = cur.next
-				pq[price] = (price, length, listNode)
-
+				if length == 0:
+					pq.pop(price)
+					return
+				pq[price] = (price, length, dummy.next)
+					
 	def __gen_book(self, record):
 		lvl = 0
 		j = 0
 		candidates = pqdict.nsmallest(self.__depth, record)
-		res = [[0, 0] for i in xrange(self.__depth)]
+		res = [0 for i in xrange(2*self.__depth)]
 		for k in candidates:
 			v = record[k]
 			cur = v[2]
@@ -119,9 +156,9 @@ class Book_driver(object):
 			while cur != None:
 				qty += cur.qty
 				cur = cur.next
-			res[j][0] = abs(k)
-			res[j][1] = qty
-			j += 1
+			res[j] = abs(k)
+			res[j+1] = qty
+			j += 2
 		return res
 
 def tuple_binary_search(A, target1, target2_idx, target2):
@@ -145,9 +182,15 @@ def tuple_binary_search(A, target1, target2_idx, target2):
 	return -1
 
 if __name__ == "__main__":
-	md_order = pd.read_csv("/Users/wenshuaiye/Kaggle/bitcoin/data/live_order_1")
+	path = "/Users/wenshuaiye/Kaggle/bitcoin/data/20161018_"
+	md_order = pd.DataFrame()
+	trade = cr.load(5,8, "live_trade_")
+	for i in xrange(12, 15):
+		tmp = pd.read_csv(os.path.join(path, "live_order_" + str(i)))
+		md_order = pd.concat([md_order, tmp], copy = False)
+	#md_order = md_order[(md_order.price < 650) & (md_order.price > 590)]
 	driver = Book_driver(5)
-	print md_order[md_order.price == 605.79]
-	tmp = driver.load(md_order)
-	print tmp[0][-1]			
-
+	tmp = driver.load(md_order, trade)
+	bid = pd.DataFrame(tmp[0])
+	ask = pd.DataFrame(tmp[1])
+	ts = tmp[2]
